@@ -728,30 +728,136 @@ const message =
 
 async function loadData() {
 
-    const response =
-        await fetch(
-            "./familymembers.json"
+    const url = "./familymembers.json";
+
+    console.log("Loading:", url);
+
+    let response;
+
+    try {
+
+        response = await fetch(
+            url,
+            {
+                cache: "no-store"
+            }
         );
+
+    } catch (error) {
+
+        throw new Error(
+            "Could not fetch familymembers.json. " +
+            "Make sure you are running the site through a local web server, " +
+            "not opening index.html directly."
+        );
+    }
 
 
     if (!response.ok) {
 
         throw new Error(
-            "Could not load familymembers.json"
+            `Could not load familymembers.json: ` +
+            `${response.status} ${response.statusText}`
         );
     }
 
 
-    const data =
-        await response.json();
+    let data;
 
+    try {
 
-    if (!Array.isArray(data)) {
+        data =
+            await response.json();
+
+    } catch (error) {
 
         throw new Error(
-            "familymembers.json must contain an array"
+            "familymembers.json was found, " +
+            "but it contains invalid JSON."
         );
     }
+
+
+    /*
+     * Allow either:
+     *
+     * [
+     *     {...},
+     *     {...}
+     * ]
+     *
+     * OR:
+     *
+     * {
+     *     "people": [
+     *         {...},
+     *         {...}
+     *     ]
+     * }
+     */
+
+    if (Array.isArray(data)) {
+
+        people = data;
+
+    } else if (
+        data &&
+        Array.isArray(data.people)
+    ) {
+
+        people = data.people;
+
+    } else {
+
+        throw new Error(
+            "familymembers.json must contain " +
+            "an array of people."
+        );
+    }
+
+
+    /*
+     * Build ID lookup.
+     */
+
+    peopleById.clear();
+
+
+    for (const person of people) {
+
+        if (
+            person.id === undefined ||
+            person.id === null
+        ) {
+
+            console.warn(
+                "Skipping person without an ID:",
+                person
+            );
+
+            continue;
+        }
+
+
+        peopleById.set(
+            person.id,
+            person
+        );
+    }
+
+
+    console.log(
+        `Loaded ${people.length} people.`
+    );
+
+
+    validateParentReferences();
+
+    buildFamilies();
+
+    generations =
+        calculateGenerations();
+}
 
 
     people = data;
