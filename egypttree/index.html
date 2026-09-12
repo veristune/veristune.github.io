@@ -1143,65 +1143,97 @@ function calculateLayout() {
      * Group people by generation.
      */
 
-    const rows =
-        new Map();
+    const rows = new Map();
 
 
     for (const person of people) {
 
+        if (
+            !person ||
+            person.id === undefined ||
+            person.id === null
+        ) {
+
+            console.warn(
+                "Skipping person without an ID:",
+                person
+            );
+
+            continue;
+        }
+
+
         const generation =
-            generations.get(
-                person.id
-            ) ?? 0;
+            generations.get(person.id);
+
+
+        /*
+         * If generation somehow wasn't calculated,
+         * put the person in generation 0 rather than
+         * allowing undefined values to propagate.
+         */
+
+        const safeGeneration =
+            Number.isFinite(generation)
+                ? generation
+                : 0;
 
 
         if (
-            !rows.has(
-                generation
-            )
+            !rows.has(safeGeneration)
         ) {
 
             rows.set(
-                generation,
+                safeGeneration,
                 []
             );
         }
 
 
         rows
-            .get(generation)
+            .get(safeGeneration)
             .push(person);
     }
 
 
     /*
-     * Sort initially by ID.
-
-     * This only determines the initial arrangement.
-     * Later relaxation moves nodes.
-     */
-
-    for (
-        const row
-        of rows.values()
-    ) {
-
-        row.sort(
-            (a, b) =>
-                Number(a.id) -
-                Number(b.id)
-        );
-    }
-
-
-    /*
-     * Initial positions.
+     * Give EVERY valid person an initial position.
      */
 
     for (
         const [generation, row]
         of rows
     ) {
+
+        /*
+         * Sort by ID purely for deterministic
+         * initial placement.
+         */
+
+        row.sort(
+            (a, b) => {
+
+                const aId =
+                    Number(a.id);
+
+                const bId =
+                    Number(b.id);
+
+                if (
+                    Number.isNaN(aId) ||
+                    Number.isNaN(bId)
+                ) {
+
+                    return String(a.id)
+                        .localeCompare(
+                            String(b.id)
+                        );
+                }
+
+                return aId - bId;
+            }
+        );
+
 
         for (
             let index = 0;
@@ -1216,7 +1248,6 @@ function calculateLayout() {
             positions.set(
                 person.id,
                 {
-
                     x:
                         CONFIG.padding +
                         index *
@@ -1232,12 +1263,277 @@ function calculateLayout() {
                             CONFIG.nodeHeight +
                             CONFIG.verticalGap
                         )
-
                 }
             );
         }
     }
 
+
+    /*
+     * Relax the layout.
+     */
+
+    for (
+        let iteration = 0;
+        iteration <
+        CONFIG.layoutIterations;
+        iteration++
+    ) {
+
+        for (
+            const family
+            of families
+        ) {
+
+            if (!family) {
+                continue;
+            }
+
+
+            const parentPositions = [];
+
+
+            /*
+             * Father.
+             */
+
+            if (
+                family.father !== null &&
+                family.father !== undefined
+            ) {
+
+                const position =
+                    positions.get(
+                        family.father
+                    );
+
+
+                if (position) {
+
+                    parentPositions.push(
+                        position
+                    );
+                }
+            }
+
+
+            /*
+             * Mother.
+             */
+
+            if (
+                family.mother !== null &&
+                family.mother !== undefined
+            ) {
+
+                const position =
+                    positions.get(
+                        family.mother
+                    );
+
+
+                if (position) {
+
+                    parentPositions.push(
+                        position
+                    );
+                }
+            }
+
+
+            /*
+             * We don't know where either parent is.
+             */
+
+            if (
+                parentPositions.length === 0
+            ) {
+
+                continue;
+            }
+
+
+            /*
+             * Parent center.
+             */
+
+            let parentCenter = 0;
+
+
+            for (
+                const position
+                of parentPositions
+            ) {
+
+                if (!position) {
+                    continue;
+                }
+
+
+                parentCenter +=
+                    position.x +
+                    CONFIG.nodeWidth / 2;
+            }
+
+
+            parentCenter /=
+                parentPositions.length;
+
+
+            /*
+             * Children.
+             */
+
+            const childPositions = [];
+
+
+            for (
+                const childId
+                of family.children
+            ) {
+
+                const position =
+                    positions.get(
+                        childId
+                    );
+
+
+                if (position) {
+
+                    childPositions.push(
+                        position
+                    );
+                }
+            }
+
+
+            if (
+                childPositions.length === 0
+            ) {
+
+                continue;
+            }
+
+
+            /*
+             * Child center.
+             */
+
+            let childCenter = 0;
+
+
+            for (
+                const position
+                of childPositions
+            ) {
+
+                childCenter +=
+                    position.x +
+                    CONFIG.nodeWidth / 2;
+            }
+
+
+            childCenter /=
+                childPositions.length;
+
+
+            /*
+             * Pull children toward parents.
+             */
+
+            const movement =
+                (
+                    parentCenter -
+                    childCenter
+                ) * 0.18;
+
+
+            for (
+                const position
+                of childPositions
+            ) {
+
+                if (!position) {
+                    continue;
+                }
+
+
+                position.x +=
+                    movement;
+            }
+        }
+
+
+        /*
+         * Resolve collisions after each pass.
+         */
+
+        resolveRowCollisions(
+            rows
+        );
+    }
+
+
+    /*
+     * Final collision pass.
+     */
+
+    resolveRowCollisions(
+        rows
+    );
+
+
+    /*
+     * Normalize the tree.
+     */
+
+    let minimumX =
+        Infinity;
+
+
+    for (
+        const position
+        of positions.values()
+    ) {
+
+        if (!position) {
+            continue;
+        }
+
+
+        minimumX =
+            Math.min(
+                minimumX,
+                position.x
+            );
+    }
+
+
+    if (
+        Number.isFinite(minimumX) &&
+        minimumX < CONFIG.padding
+    ) {
+
+        const adjustment =
+            CONFIG.padding -
+            minimumX;
+
+
+        for (
+            const position
+            of positions.values()
+        ) {
+
+            if (!position) {
+                continue;
+            }
+
+
+            position.x +=
+                adjustment;
+        }
+    }
+}
 
     /*
      * Relaxation.
@@ -1467,34 +1763,32 @@ function calculateLayout() {
    COLLISION RESOLUTION
    ========================================================= */
 
-function resolveRowCollisions(
-    rows
-) {
+function resolveRowCollisions(rows) {
 
-    /*
-     * Process each generation separately.
-     */
-
-    for (
-        const row
-        of rows.values()
-    ) {
-
-        const sorted =
-            [...row].sort(
-                (a, b) => {
-
-                    return (
-                        positions.get(a.id).x -
-                        positions.get(b.id).x
-                    );
-                }
-            );
-
+    for (const row of rows.values()) {
 
         /*
-         * Push overlapping cards apart.
+         * Only keep people that actually have a position.
          */
+        const sorted = row
+            .filter(person => {
+                return (
+                    person &&
+                    positions.has(person.id) &&
+                    positions.get(person.id)
+                );
+            })
+            .sort((a, b) => {
+
+                const posA =
+                    positions.get(a.id);
+
+                const posB =
+                    positions.get(b.id);
+
+                return posA.x - posB.x;
+            });
+
 
         for (
             let i = 1;
@@ -1513,16 +1807,21 @@ function resolveRowCollisions(
                 );
 
 
+            /*
+             * Extra protection against malformed data.
+             */
+            if (!previous || !current) {
+                continue;
+            }
+
+
             const minimumX =
                 previous.x +
                 CONFIG.nodeWidth +
                 CONFIG.minimumNodeGap;
 
 
-            if (
-                current.x <
-                minimumX
-            ) {
+            if (current.x < minimumX) {
 
                 current.x =
                     minimumX;
