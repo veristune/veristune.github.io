@@ -1,0 +1,102 @@
+[
+  {
+    "id": "1",
+    "name": "Shoshenq I",
+    "father": "null",
+    "mother": "null",
+    "birth": "null",
+    "death": "null",
+    "images": "null",
+    "sources": "Jansen-Winkeln 2006"
+  },
+  {
+    "id": "2",
+    "name": "Tashepenbast",
+    "father": "1",
+    "mother": "null",
+    "birth": "null",
+    "death": "null",
+    "images": "null",
+    "sources": "Jansen-Winkeln 2006"
+  },
+  {
+    "id": "3",
+    "name": "Djedthutefankh",
+    "father": "4",
+    "mother": "5",
+    "birth": "null",
+    "death": "null",
+    "images": "null",
+    "sources": "Jansen-Winkeln 2006"
+  },
+  {
+    "id": "4",
+    "name": "Amenemone",
+    "father": "7",
+    "mother": "null",
+    "birth": "null",
+    "death": "null",
+    "images": "null",
+    "sources": "Jansen-Winkeln 2006"
+  },
+  {
+    "id": "5",
+    "name": "Tanodjmet",
+    "father": "6",
+    "mother": "null",
+    "birth": "null",
+    "death": "null",
+    "images": "null",
+    "sources": "Jansen-Winkeln 2006"
+  },
+  {
+    "id": "6",
+    "name": "Amenhotep",
+    "father": "null",
+    "mother": "null",
+    "birth": "null",
+    "death": "null",
+    "images": "null",
+    "sources": "Jansen-Winkeln 2006"
+  },
+  {
+    "id": "7",
+    "name": "Nesipaqashuty",
+    "father": "8",
+    "mother": "null",
+    "birth": "null",
+    "death": "null",
+    "images": "null",
+    "sources": "Jansen-Winkeln 2006"
+  },
+  {
+    "id": "8",
+    "name": "Bakenkhons",
+    "father": "9",
+    "mother": "null",
+    "birth": "null",
+    "death": "null",
+    "images": "null",
+    "sources": "Jansen-Winkeln 2006"
+  },
+  {
+    "id": "9",
+    "name": "Nesipaqashuty",
+    "father": "10",
+    "mother": "null",
+    "birth": "null",
+    "death": "null",
+    "images": "null",
+    "sources": "Jansen-Winkeln 2006"
+  },
+  {
+    "id": "10",
+    "name": "Paisen",
+    "father": "null",
+    "mother": "null",
+    "birth": "null",
+    "death": "null",
+    "images": "null",
+    "sources": "Jansen-Winkeln 2006"
+  }
+]
