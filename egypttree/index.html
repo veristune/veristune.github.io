@@ -1,636 +1,3315 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <title>Family Tree</title>
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Genealogical Family Tree</title>
+
 
     <style>
-        html, body {
+
+        /* =====================================================
+           RESET
+           ===================================================== */
+
+        * {
+            box-sizing: border-box;
+        }
+
+
+        html,
+        body {
             margin: 0;
             padding: 0;
+
             width: 100%;
             height: 100%;
+
             overflow: hidden;
-            font-family: Georgia, serif;
-            background: #f4f1ea;
         }
 
-        #tree-container {
-            width: 100vw;
-            height: 100vh;
+
+        body {
+            background: #f1eee7;
+
+            color: #302a25;
+
+            font-family:
+                Georgia,
+                "Times New Roman",
+                serif;
+        }
+
+
+        /* =====================================================
+           MAIN VIEWPORT
+           ===================================================== */
+
+        #viewport {
+
+            position: fixed;
+
+            left: 0;
+            top: 0;
+            right: 0;
+            bottom: 0;
+
             overflow: hidden;
+
             cursor: grab;
+
+            background:
+                #f1eee7;
+
+            user-select: none;
         }
 
-        #tree-container.dragging {
+
+        #viewport.dragging {
             cursor: grabbing;
         }
 
-        svg {
-            width: 100%;
-            height: 100%;
+
+        /* =====================================================
+           TREE
+
+           This is an ordinary HTML DIV.
+
+           No SVG.
+           No canvas.
+           ===================================================== */
+
+        #tree {
+
+            position: absolute;
+
+            left: 0;
+            top: 0;
+
+            width: 100px;
+            height: 100px;
+
+            transform-origin: 0 0;
+
+            will-change:
+                transform;
         }
 
-        .person-box {
-            fill: #fffdf8;
-            stroke: #4b4035;
-            stroke-width: 2;
-            rx: 8;
+
+        /* =====================================================
+           CONNECTIONS
+
+           All connections are ordinary DIVs.
+           ===================================================== */
+
+        .connection {
+
+            position: absolute;
+
+            background: #81786e;
+
+            pointer-events: none;
+
+            z-index: 1;
         }
 
-        .person-name {
-            font-size: 16px;
-            font-weight: bold;
-            fill: #29231f;
+
+        .connection.horizontal {
+
+            height: 2px;
         }
 
-        .person-date {
-            font-size: 13px;
-            fill: #665c54;
-        }
 
-        .person-source {
-            font-size: 11px;
-            fill: #81766d;
-        }
+        .connection.vertical {
 
-        .person-image {
-            object-fit: cover;
-        }
-
-        .parent-line {
-            fill: none;
-            stroke: #71675f;
-            stroke-width: 2;
-        }
-
-        .relationship-line {
-            fill: none;
-            stroke: #a18c70;
-            stroke-width: 2;
-        }
-
-        .unknown-image {
-            fill: #ddd5ca;
-        }
-    </style>
-</head>
-
-<body>
-
-<div id="tree-container">
-    <svg id="tree">
-        <g id="viewport">
-            <g id="relationships"></g>
-            <g id="people"></g>
-        </g>
-    </svg>
-</div>
-
-<script>
-async function loadFamily() {
-    const response = await fetch("familymembers.json");
-
-    if (!response.ok) {
-        throw new Error("Could not load familymembers.json");
-    }
-
-    return await response.json();
-}
-
-
-class FamilyTree {
-
-    constructor(svg, people) {
-        this.svg = svg;
-        this.people = people;
-
-        this.peopleById = new Map(
-            people.map(person => [person.id, person])
-        );
-
-        this.positions = new Map();
-
-        this.viewport = svg.querySelector("#viewport");
-        this.relationshipLayer = svg.querySelector("#relationships");
-        this.peopleLayer = svg.querySelector("#people");
-
-        this.nodeWidth = 240;
-        this.nodeHeight = 100;
-
-        this.horizontalSpacing = 40;
-        this.verticalSpacing = 100;
-    }
-
-
-    getPerson(id) {
-        if (id == null) {
-            return null;
-        }
-
-        return this.peopleById.get(id) || null;
-    }
-
-
-    /*
-     * Determine an approximate generation for each person.
-     *
-     * This is deliberately tolerant of unusual genealogies.
-     */
-    calculateGenerations() {
-
-        const generations = new Map();
-        const visiting = new Set();
-
-        const getGeneration = (person) => {
-
-            if (!person) {
-                return 0;
-            }
-
-            if (generations.has(person.id)) {
-                return generations.get(person.id);
-            }
-
-            // Prevent infinite recursion if malformed data
-            // contains an actual genealogical cycle.
-            if (visiting.has(person.id)) {
-                return 0;
-            }
-
-            visiting.add(person.id);
-
-            const father = this.getPerson(person.father);
-            const mother = this.getPerson(person.mother);
-
-            let generation = 0;
-
-            if (father) {
-                generation = Math.max(
-                    generation,
-                    getGeneration(father) + 1
-                );
-            }
-
-            if (mother) {
-                generation = Math.max(
-                    generation,
-                    getGeneration(mother) + 1
-                );
-            }
-
-            visiting.delete(person.id);
-
-            generations.set(person.id, generation);
-
-            return generation;
-        };
-
-
-        for (const person of this.people) {
-            getGeneration(person);
-        }
-
-        return generations;
-    }
-
-
-    /*
-     * Put people into generation rows.
-     */
-    calculatePositions() {
-
-        const generations = this.calculateGenerations();
-
-        const rows = new Map();
-
-        for (const person of this.people) {
-
-            const generation = generations.get(person.id);
-
-            if (!rows.has(generation)) {
-                rows.set(generation, []);
-            }
-
-            rows.get(generation).push(person);
+            width: 2px;
         }
 
 
         /*
-         * Sort each generation by ID for now.
-         *
-         * This can later be replaced with a much smarter
-         * genealogical ordering algorithm.
+         * Relationship between two parents.
          */
-        for (const people of rows.values()) {
-            people.sort((a, b) => a.id - b.id);
+
+        .connection.partner {
+
+            height: 2px;
+
+            background: #665d54;
         }
 
 
-        for (const [generation, people] of rows) {
+        /*
+         * Junction dot.
+         */
 
-            people.forEach((person, index) => {
+        .junction {
 
-                const x =
-                    index *
-                    (this.nodeWidth + this.horizontalSpacing);
+            position: absolute;
 
-                const y =
-                    generation *
-                    (this.nodeHeight + this.verticalSpacing);
+            width: 7px;
+            height: 7px;
 
-                this.positions.set(person.id, {
-                    x,
-                    y
-                });
-            });
+            margin-left: -3.5px;
+            margin-top: -3.5px;
+
+            border-radius: 50%;
+
+            background: #665d54;
+
+            z-index: 2;
+
+            pointer-events: none;
         }
+
+
+        /* =====================================================
+           PERSON CARD
+           ===================================================== */
+
+        .person {
+
+            position: absolute;
+
+            width: 210px;
+            height: 88px;
+
+            display: flex;
+
+            align-items: center;
+
+            padding: 9px;
+
+            background: #fcfaf5;
+
+            border:
+                1px solid
+                #756b61;
+
+            border-radius: 7px;
+
+            box-shadow:
+                0 1px 2px
+                rgba(0, 0, 0, 0.10);
+
+            z-index: 10;
+
+            cursor: pointer;
+
+            transition:
+                border-color 0.12s,
+                box-shadow 0.12s,
+                background 0.12s;
+        }
+
+
+        .person:hover {
+
+            border-color:
+                #332c26;
+
+            box-shadow:
+                0 3px 8px
+                rgba(0, 0, 0, 0.15);
+        }
+
+
+        .person.selected {
+
+            border:
+                2px solid
+                #5c4632;
+
+            background:
+                #fffdf8;
+
+            box-shadow:
+                0 4px 12px
+                rgba(0, 0, 0, 0.18);
+        }
+
+
+        /* =====================================================
+           PERSON IMAGE
+
+           Explicitly on the LEFT.
+           ===================================================== */
+
+        .person-image {
+
+            width: 66px;
+            height: 66px;
+
+            flex:
+                0 0 66px;
+
+            margin-right: 11px;
+
+            object-fit: cover;
+
+            border-radius: 3px;
+
+            background:
+                #ded8cf;
+        }
+
+
+        .person-image.placeholder {
+
+            display: flex;
+
+            align-items: center;
+            justify-content: center;
+
+            color:
+                #aaa198;
+
+            font-size: 22px;
+
+            font-family:
+                Georgia,
+                serif;
+        }
+
+
+        /* =====================================================
+           PERSON INFORMATION
+           ===================================================== */
+
+        .person-info {
+
+            min-width: 0;
+
+            overflow: hidden;
+        }
+
+
+        .person-name {
+
+            margin-bottom: 5px;
+
+            font-size: 14px;
+
+            font-weight: bold;
+
+            line-height: 1.15;
+
+            color:
+                #352d27;
+        }
+
+
+        .person-dates {
+
+            font-size: 10px;
+
+            line-height: 1.2;
+
+            color:
+                #776d64;
+        }
+
+
+        .person-source {
+
+            margin-top: 6px;
+
+            font-size: 9px;
+
+            line-height: 1.1;
+
+            color:
+                #968c81;
+
+            white-space: nowrap;
+
+            overflow: hidden;
+
+            text-overflow: ellipsis;
+        }
+
+
+        /* =====================================================
+           SIDE INFORMATION PANEL
+           ===================================================== */
+
+        #details {
+
+            position: fixed;
+
+            right: 20px;
+            top: 20px;
+
+            width: 290px;
+
+            max-height:
+                calc(100vh - 40px);
+
+            overflow-y: auto;
+
+            padding: 18px;
+
+            background:
+                rgba(252, 250, 245, 0.97);
+
+            border:
+                1px solid
+                #756b61;
+
+            border-radius: 8px;
+
+            box-shadow:
+                0 5px 25px
+                rgba(0, 0, 0, 0.18);
+
+            z-index: 100;
+
+            display: none;
+        }
+
+
+        #details.visible {
+            display: block;
+        }
+
+
+        #details h2 {
+
+            margin:
+                0 0 12px;
+
+            font-size: 19px;
+        }
+
+
+        #details .detail-image {
+
+            width: 100%;
+
+            max-height: 220px;
+
+            object-fit: contain;
+
+            margin-bottom: 12px;
+
+            background:
+                #ded8cf;
+        }
+
+
+        .detail-row {
+
+            margin-bottom: 9px;
+        }
+
+
+        .detail-label {
+
+            font-size: 10px;
+
+            text-transform: uppercase;
+
+            letter-spacing: 0.04em;
+
+            color:
+                #8a7f74;
+        }
+
+
+        .detail-value {
+
+            font-size: 13px;
+
+            margin-top: 2px;
+        }
+
+
+        #close-details {
+
+            position: absolute;
+
+            right: 10px;
+            top: 8px;
+
+            border: none;
+
+            background: none;
+
+            font-size: 20px;
+
+            cursor: pointer;
+
+            color: #756b61;
+        }
+
+
+        /* =====================================================
+           CONTROLS
+           ===================================================== */
+
+        #controls {
+
+            position: fixed;
+
+            left: 18px;
+            top: 18px;
+
+            z-index: 200;
+
+            display: flex;
+
+            gap: 6px;
+        }
+
+
+        #controls button {
+
+            padding:
+                7px 11px;
+
+            border:
+                1px solid
+                #8a8178;
+
+            border-radius: 5px;
+
+            background:
+                rgba(252, 250, 245, 0.95);
+
+            color:
+                #423a33;
+
+            font-family:
+                Georgia,
+                serif;
+
+            cursor: pointer;
+        }
+
+
+        #controls button:hover {
+
+            background:
+                #fffdf8;
+        }
+
+
+        /* =====================================================
+           LOADING / ERROR
+           ===================================================== */
+
+        #message {
+
+            position: fixed;
+
+            left: 50%;
+            top: 50%;
+
+            transform:
+                translate(-50%, -50%);
+
+            padding: 20px 25px;
+
+            background:
+                #fcfaf5;
+
+            border:
+                1px solid
+                #756b61;
+
+            border-radius: 8px;
+
+            box-shadow:
+                0 4px 20px
+                rgba(0, 0, 0, 0.15);
+
+            z-index: 500;
+        }
+
+
+        #message.hidden {
+            display: none;
+        }
+
+
+    </style>
+
+</head>
+
+
+<body>
+
+
+    <!-- =====================================================
+         CONTROLS
+         ===================================================== -->
+
+    <div id="controls">
+
+        <button id="zoom-in">
+            +
+        </button>
+
+        <button id="zoom-out">
+            −
+        </button>
+
+        <button id="reset-view">
+            Reset
+        </button>
+
+        <button id="fit-view">
+            Fit
+        </button>
+
+    </div>
+
+
+    <!-- =====================================================
+         MAIN VIEWPORT
+         ===================================================== -->
+
+    <div id="viewport">
+
+        <div id="tree"></div>
+
+    </div>
+
+
+    <!-- =====================================================
+         DETAILS PANEL
+         ===================================================== -->
+
+    <div id="details">
+
+        <button id="close-details">
+            ×
+        </button>
+
+        <div id="details-content"></div>
+
+    </div>
+
+
+    <!-- =====================================================
+         MESSAGE
+         ===================================================== -->
+
+    <div id="message">
+        Loading genealogy...
+    </div>
+
+
+<script>
+
+
+/* =========================================================
+   CONFIGURATION
+   ========================================================= */
+
+const CONFIG = {
+
+    /*
+     * Dimensions of each person's box.
+     */
+
+    nodeWidth: 210,
+
+    nodeHeight: 88,
+
+
+    /*
+     * Horizontal distance between nodes.
+     */
+
+    horizontalGap: 60,
+
+
+    /*
+     * Vertical distance between generations.
+     */
+
+    verticalGap: 120,
+
+
+    /*
+     * Initial padding around the tree.
+     */
+
+    padding: 100,
+
+
+    /*
+     * Number of layout relaxation passes.
+     */
+
+    layoutIterations: 40,
+
+
+    /*
+     * Minimum distance between cards.
+     */
+
+    minimumNodeGap: 25
+
+};
+
+
+
+/* =========================================================
+   GLOBAL DATA
+   ========================================================= */
+
+let people = [];
+
+let peopleById = new Map();
+
+let families = [];
+
+let positions = new Map();
+
+
+/*
+ * Generation of each person.
+ */
+
+let generations = new Map();
+
+
+/*
+ * Current view transformation.
+ */
+
+let zoom = 1;
+
+let panX = 0;
+
+let panY = 0;
+
+
+/*
+ * Currently selected person.
+ */
+
+let selectedPersonId = null;
+
+
+
+/* =========================================================
+   DOM
+   ========================================================= */
+
+const viewport =
+    document.getElementById("viewport");
+
+const tree =
+    document.getElementById("tree");
+
+const details =
+    document.getElementById("details");
+
+const detailsContent =
+    document.getElementById("details-content");
+
+const message =
+    document.getElementById("message");
+
+
+
+/* =========================================================
+   LOAD JSON
+   ========================================================= */
+
+async function loadData() {
+
+    const response =
+        await fetch(
+            "./familymembers.json"
+        );
+
+
+    if (!response.ok) {
+
+        throw new Error(
+            "Could not load familymembers.json"
+        );
     }
 
 
-    draw() {
+    const data =
+        await response.json();
 
-        this.calculatePositions();
 
-        this.drawRelationships();
-        this.drawPeople();
+    if (!Array.isArray(data)) {
+
+        throw new Error(
+            "familymembers.json must contain an array"
+        );
     }
 
 
-    drawRelationships() {
+    people = data;
 
-        this.relationshipLayer.innerHTML = "";
 
-        for (const child of this.people) {
+    /*
+     * Build ID lookup table.
+     */
 
-            const childPosition = this.positions.get(child.id);
+    peopleById.clear();
 
-            if (!childPosition) {
+
+    for (const person of people) {
+
+        if (
+            person.id === undefined ||
+            person.id === null
+        ) {
+
+            console.warn(
+                "Person has no ID:",
+                person
+            );
+
+            continue;
+        }
+
+
+        if (
+            peopleById.has(
+                person.id
+            )
+        ) {
+
+            console.warn(
+                "Duplicate person ID:",
+                person.id
+            );
+        }
+
+
+        peopleById.set(
+            person.id,
+            person
+        );
+    }
+
+
+    validateParentReferences();
+
+
+    buildFamilies();
+
+
+    generations =
+        calculateGenerations();
+}
+
+
+
+/* =========================================================
+   VALIDATE DATA
+   ========================================================= */
+
+function validateParentReferences() {
+
+    for (const person of people) {
+
+        for (const role of [
+            "father",
+            "mother"
+        ]) {
+
+            const parentId =
+                person[role];
+
+
+            if (
+                parentId === null ||
+                parentId === undefined
+            ) {
                 continue;
             }
 
-            const father = this.getPerson(child.father);
-            const mother = this.getPerson(child.mother);
 
+            if (
+                !peopleById.has(
+                    parentId
+                )
+            ) {
 
-            /*
-             * Draw parent → child relationships.
-             */
-            for (const parent of [father, mother]) {
+                console.warn(
 
-                if (!parent) {
-                    continue;
-                }
-
-                const parentPosition =
-                    this.positions.get(parent.id);
-
-                if (!parentPosition) {
-                    continue;
-                }
-
-
-                const x1 =
-                    parentPosition.x +
-                    this.nodeWidth / 2;
-
-                const y1 =
-                    parentPosition.y +
-                    this.nodeHeight;
-
-                const x2 =
-                    childPosition.x +
-                    this.nodeWidth / 2;
-
-                const y2 =
-                    childPosition.y;
-
-
-                /*
-                 * Use an orthogonal-looking path rather than
-                 * simply drawing a diagonal line.
-                 */
-                const middleY =
-                    (y1 + y2) / 2;
-
-
-                const path = document.createElementNS(
-                    "http://www.w3.org/2000/svg",
-                    "path"
+                    `Person ${person.id} ` +
+                    `references nonexistent ` +
+                    `${role} ${parentId}`
                 );
-
-                path.setAttribute(
-                    "d",
-                    `
-                    M ${x1} ${y1}
-                    V ${middleY}
-                    H ${x2}
-                    V ${y2}
-                    `
-                );
-
-                path.setAttribute(
-                    "class",
-                    "parent-line"
-                );
-
-                this.relationshipLayer.appendChild(path);
             }
-
-
-            /*
-             * Draw a horizontal relationship between the
-             * parents themselves.
-             */
-            if (father && mother) {
-
-                const fatherPosition =
-                    this.positions.get(father.id);
-
-                const motherPosition =
-                    this.positions.get(mother.id);
-
-
-                if (fatherPosition && motherPosition) {
-
-                    const x1 =
-                        fatherPosition.x +
-                        this.nodeWidth / 2;
-
-                    const x2 =
-                        motherPosition.x +
-                        this.nodeWidth / 2;
-
-                    const y =
-                        fatherPosition.y +
-                        this.nodeHeight / 2;
-
-
-                    const line =
-                        document.createElementNS(
-                            "http://www.w3.org/2000/svg",
-                            "line"
-                        );
-
-                    line.setAttribute("x1", x1);
-                    line.setAttribute("x2", x2);
-                    line.setAttribute("y1", y);
-                    line.setAttribute("y2", y);
-
-                    line.setAttribute(
-                        "class",
-                        "relationship-line"
-                    );
-
-                    this.relationshipLayer.appendChild(line);
-                }
-            }
-        }
-    }
-
-
-    drawPeople() {
-
-        this.peopleLayer.innerHTML = "";
-
-        for (const person of this.people) {
-
-            const position =
-                this.positions.get(person.id);
-
-            if (!position) {
-                continue;
-            }
-
-
-            const group =
-                document.createElementNS(
-                    "http://www.w3.org/2000/svg",
-                    "g"
-                );
-
-            group.setAttribute(
-                "transform",
-                `translate(${position.x}, ${position.y})`
-            );
-
-
-            /*
-             * Box
-             */
-            const rect =
-                document.createElementNS(
-                    "http://www.w3.org/2000/svg",
-                    "rect"
-                );
-
-            rect.setAttribute("width", this.nodeWidth);
-            rect.setAttribute("height", this.nodeHeight);
-
-            rect.setAttribute(
-                "class",
-                "person-box"
-            );
-
-            group.appendChild(rect);
-
-
-            /*
-             * Image on LEFT.
-             */
-            const imageSize = 72;
-
-            if (person.image) {
-
-                const image =
-                    document.createElementNS(
-                        "http://www.w3.org/2000/svg",
-                        "image"
-                    );
-
-                image.setAttribute(
-                    "href",
-                    person.image
-                );
-
-                image.setAttribute(
-                    "x",
-                    10
-                );
-
-                image.setAttribute(
-                    "y",
-                    14
-                );
-
-                image.setAttribute(
-                    "width",
-                    imageSize
-                );
-
-                image.setAttribute(
-                    "height",
-                    imageSize
-                );
-
-                image.setAttribute(
-                    "preserveAspectRatio",
-                    "xMidYMid slice"
-                );
-
-                group.appendChild(image);
-
-            } else {
-
-                const placeholder =
-                    document.createElementNS(
-                        "http://www.w3.org/2000/svg",
-                        "rect"
-                    );
-
-                placeholder.setAttribute("x", 10);
-                placeholder.setAttribute("y", 14);
-                placeholder.setAttribute(
-                    "width",
-                    imageSize
-                );
-                placeholder.setAttribute(
-                    "height",
-                    imageSize
-                );
-
-                placeholder.setAttribute(
-                    "class",
-                    "unknown-image"
-                );
-
-                group.appendChild(placeholder);
-            }
-
-
-            /*
-             * Name
-             */
-            const name =
-                document.createElementNS(
-                    "http://www.w3.org/2000/svg",
-                    "text"
-                );
-
-            name.setAttribute("x", 92);
-            name.setAttribute("y", 30);
-
-            name.setAttribute(
-                "class",
-                "person-name"
-            );
-
-            name.textContent =
-                person.name || "Unknown";
-
-            group.appendChild(name);
-
-
-            /*
-             * Dates
-             */
-            const dates =
-                document.createElementNS(
-                    "http://www.w3.org/2000/svg",
-                    "text"
-                );
-
-            dates.setAttribute("x", 92);
-            dates.setAttribute("y", 51);
-
-            dates.setAttribute(
-                "class",
-                "person-date"
-            );
-
-            const birth =
-                person.birth || "?";
-
-            const death =
-                person.death || "?";
-
-            dates.textContent =
-                `${birth} – ${death}`;
-
-            group.appendChild(dates);
-
-
-            /*
-             * Source
-             */
-            const source =
-                document.createElementNS(
-                    "http://www.w3.org/2000/svg",
-                    "text"
-                );
-
-            source.setAttribute("x", 92);
-            source.setAttribute("y", 72);
-
-            source.setAttribute(
-                "class",
-                "person-source"
-            );
-
-            source.textContent =
-                person.source || "";
-
-            group.appendChild(source);
-
-
-            /*
-             * Clicking a person could later open a
-             * detailed information panel.
-             */
-            group.style.cursor = "pointer";
-
-            group.addEventListener(
-                "click",
-                () => {
-                    console.log("Selected:", person);
-                }
-            );
-
-
-            this.peopleLayer.appendChild(group);
         }
     }
 }
 
+
+
+/* =========================================================
+   BUILD FAMILY UNITS
+   =========================================================
+
+   This is extremely important.
+
+   We don't draw:
+
+       father → child
+       mother → child
+
+   independently.
+
+   Instead we construct:
+
+       father ─ mother
+               |
+             family
+             junction
+             /   \
+           child child
+
+   A family is simply a unique combination of
+   father + mother.
+
+   This naturally supports sibling/sibling,
+   cousin/cousin, etc.
+   ========================================================= */
+
+function buildFamilies() {
+
+    const familyMap =
+        new Map();
+
+
+    for (const child of people) {
+
+        const father =
+            child.father ??
+            null;
+
+        const mother =
+            child.mother ??
+            null;
+
+
+        /*
+         * No known parents means there is no
+         * family unit we can draw.
+         */
+
+        if (
+            father === null &&
+            mother === null
+        ) {
+            continue;
+        }
+
+
+        const key =
+            `${father}|${mother}`;
+
+
+        if (
+            !familyMap.has(key)
+        ) {
+
+            familyMap.set(
+                key,
+                {
+
+                    key,
+
+                    father,
+
+                    mother,
+
+                    children: []
+
+                }
+            );
+        }
+
+
+        familyMap
+            .get(key)
+            .children
+            .push(
+                child.id
+            );
+    }
+
+
+    families =
+        Array.from(
+            familyMap.values()
+        );
+}
+
+
+
+/* =========================================================
+   GENERATIONS
+   =========================================================
+
+   Generation 0 = people with no known parents.
+
+   Their children = generation 1.
+
+   Their grandchildren = generation 2.
+
+   etc.
+
+   An inbred person may have two parents from the
+   same generation. That's fine.
+
+   We use the MAXIMUM parent generation + 1.
+   ========================================================= */
+
+function calculateGenerations() {
+
+    const result =
+        new Map();
+
+
+    function calculate(
+        person,
+        visiting = new Set()
+    ) {
+
+        if (!person) {
+            return 0;
+        }
+
+
+        if (
+            result.has(
+                person.id
+            )
+        ) {
+
+            return result.get(
+                person.id
+            );
+        }
+
+
+        /*
+         * Protection against bad/cyclic data.
+
+         * Important:
+         * normal inbreeding does NOT create a cycle.
+
+         * Example:
+
+               A
+              / \
+             B   C
+              \ /
+               D
+
+         * D has ancestors B and C, but B and C
+         * do not descend from D.
+
+         * A genuine cycle is a different situation.
+         */
+
+        if (
+            visiting.has(
+                person.id
+            )
+        ) {
+
+            console.warn(
+                "Genealogical cycle involving:",
+                person.id
+            );
+
+            return 0;
+        }
+
+
+        const nextVisiting =
+            new Set(
+                visiting
+            );
+
+        nextVisiting.add(
+            person.id
+        );
+
+
+        let generation = 0;
+
+
+        const father =
+            peopleById.get(
+                person.father
+            );
+
+
+        const mother =
+            peopleById.get(
+                person.mother
+            );
+
+
+        if (father) {
+
+            generation =
+                Math.max(
+
+                    generation,
+
+                    calculate(
+                        father,
+                        nextVisiting
+                    ) + 1
+                );
+        }
+
+
+        if (mother) {
+
+            generation =
+                Math.max(
+
+                    generation,
+
+                    calculate(
+                        mother,
+                        nextVisiting
+                    ) + 1
+                );
+        }
+
+
+        result.set(
+            person.id,
+            generation
+        );
+
+
+        return generation;
+    }
+
+
+    for (const person of people) {
+
+        calculate(person);
+    }
+
+
+    return result;
+}
+
+
+
+/* =========================================================
+   LAYOUT
+   =========================================================
+
+   This is a lightweight graph layout.
+
+   First:
+       put everyone into their generation.
+
+   Then:
+       repeatedly move people toward the average
+       horizontal position of their parents.
+
+   Then:
+       resolve collisions.
+
+   This is MUCH more appropriate for a genealogy than
+   simply sorting by ID.
+   ========================================================= */
+
+function calculateLayout() {
+
+    positions.clear();
+
+
+    /*
+     * Group people by generation.
+     */
+
+    const rows =
+        new Map();
+
+
+    for (const person of people) {
+
+        const generation =
+            generations.get(
+                person.id
+            ) ?? 0;
+
+
+        if (
+            !rows.has(
+                generation
+            )
+        ) {
+
+            rows.set(
+                generation,
+                []
+            );
+        }
+
+
+        rows
+            .get(generation)
+            .push(person);
+    }
+
+
+    /*
+     * Sort initially by ID.
+
+     * This only determines the initial arrangement.
+     * Later relaxation moves nodes.
+     */
+
+    for (
+        const row
+        of rows.values()
+    ) {
+
+        row.sort(
+            (a, b) =>
+                Number(a.id) -
+                Number(b.id)
+        );
+    }
+
+
+    /*
+     * Initial positions.
+     */
+
+    for (
+        const [generation, row]
+        of rows
+    ) {
+
+        for (
+            let index = 0;
+            index < row.length;
+            index++
+        ) {
+
+            const person =
+                row[index];
+
+
+            positions.set(
+                person.id,
+                {
+
+                    x:
+                        CONFIG.padding +
+                        index *
+                        (
+                            CONFIG.nodeWidth +
+                            CONFIG.horizontalGap
+                        ),
+
+                    y:
+                        CONFIG.padding +
+                        generation *
+                        (
+                            CONFIG.nodeHeight +
+                            CONFIG.verticalGap
+                        )
+
+                }
+            );
+        }
+    }
+
+
+    /*
+     * Relaxation.
+
+     * Pull each child toward the average horizontal
+     * position of its parents.
+
+     * Repeating this makes families cluster together.
+     */
+
+    for (
+        let iteration = 0;
+        iteration <
+        CONFIG.layoutIterations;
+        iteration++
+    ) {
+
+        /*
+         * Process every family.
+         */
+
+        for (
+            const family
+            of families
+        ) {
+
+            const parentPositions = [];
+
+
+            if (
+                family.father !== null
+            ) {
+
+                const p =
+                    positions.get(
+                        family.father
+                    );
+
+                if (p) {
+
+                    parentPositions.push(
+                        p
+                    );
+                }
+            }
+
+
+            if (
+                family.mother !== null
+            ) {
+
+                const p =
+                    positions.get(
+                        family.mother
+                    );
+
+                if (p) {
+
+                    parentPositions.push(
+                        p
+                    );
+                }
+            }
+
+
+            if (
+                parentPositions.length === 0
+            ) {
+                continue;
+            }
+
+
+            /*
+             * Center of parents.
+             */
+
+            const parentCenter =
+                parentPositions.reduce(
+                    (
+                        total,
+                        position
+                    ) => {
+
+                        return total +
+                            position.x +
+                            CONFIG.nodeWidth / 2;
+
+                    },
+                    0
+                )
+                /
+                parentPositions.length;
+
+
+            /*
+             * Get children.
+             */
+
+            const childPositions =
+                family.children
+                    .map(
+                        id =>
+                            positions.get(id)
+                    )
+                    .filter(Boolean);
+
+
+            if (
+                childPositions.length === 0
+            ) {
+                continue;
+            }
+
+
+            /*
+             * Center of children.
+             */
+
+            const childCenter =
+                childPositions.reduce(
+                    (
+                        total,
+                        position
+                    ) => {
+
+                        return total +
+                            position.x +
+                            CONFIG.nodeWidth / 2;
+
+                    },
+                    0
+                )
+                /
+                childPositions.length;
+
+
+            /*
+             * Move children toward parents.
+
+             * We only move partway each iteration.
+             */
+
+            const movement =
+                (
+                    parentCenter -
+                    childCenter
+                )
+                *
+                0.18;
+
+
+            for (
+                const child
+                of childPositions
+            ) {
+
+                child.x +=
+                    movement;
+            }
+        }
+
+
+        /*
+         * Keep each generation collision-free.
+         */
+
+        resolveRowCollisions(
+            rows
+        );
+    }
+
+
+    /*
+     * Final collision resolution.
+     */
+
+    resolveRowCollisions(
+        rows
+    );
+
+
+    /*
+     * Normalize so minimum x isn't negative.
+     */
+
+    let minimumX =
+        Infinity;
+
+
+    for (
+        const position
+        of positions.values()
+    ) {
+
+        minimumX =
+            Math.min(
+                minimumX,
+                position.x
+            );
+    }
+
+
+    if (
+        minimumX <
+        CONFIG.padding
+    ) {
+
+        const adjustment =
+            CONFIG.padding -
+            minimumX;
+
+
+        for (
+            const position
+            of positions.values()
+        ) {
+
+            position.x +=
+                adjustment;
+        }
+    }
+}
+
+
+
+/* =========================================================
+   COLLISION RESOLUTION
+   ========================================================= */
+
+function resolveRowCollisions(
+    rows
+) {
+
+    /*
+     * Process each generation separately.
+     */
+
+    for (
+        const row
+        of rows.values()
+    ) {
+
+        const sorted =
+            [...row].sort(
+                (a, b) => {
+
+                    return (
+                        positions.get(a.id).x -
+                        positions.get(b.id).x
+                    );
+                }
+            );
+
+
+        /*
+         * Push overlapping cards apart.
+         */
+
+        for (
+            let i = 1;
+            i < sorted.length;
+            i++
+        ) {
+
+            const previous =
+                positions.get(
+                    sorted[i - 1].id
+                );
+
+            const current =
+                positions.get(
+                    sorted[i].id
+                );
+
+
+            const minimumX =
+                previous.x +
+                CONFIG.nodeWidth +
+                CONFIG.minimumNodeGap;
+
+
+            if (
+                current.x <
+                minimumX
+            ) {
+
+                current.x =
+                    minimumX;
+            }
+        }
+    }
+}
+
+
+
+/* =========================================================
+   RENDER TREE
+   ========================================================= */
+
+function renderTree() {
+
+    tree.innerHTML = "";
+
+
+    /*
+     * Connections FIRST.
+     *
+     * They therefore appear behind the person cards.
+     */
+
+    renderConnections();
+
+
+    /*
+     * People SECOND.
+     */
+
+    for (
+        const person
+        of people
+    ) {
+
+        renderPerson(
+            person
+        );
+    }
+}
+
+
+
+/* =========================================================
+   RENDER PERSON
+   ========================================================= */
+
+function renderPerson(
+    person
+) {
+
+    const position =
+        positions.get(
+            person.id
+        );
+
+
+    if (!position) {
+        return;
+    }
+
+
+    const element =
+        document.createElement(
+            "div"
+        );
+
+
+    element.className =
+        "person";
+
+
+    element.dataset.id =
+        person.id;
+
+
+    element.style.left =
+        `${position.x}px`;
+
+
+    element.style.top =
+        `${position.y}px`;
+
+
+    /*
+     * Selected state.
+     */
+
+    if (
+        selectedPersonId ===
+        person.id
+    ) {
+
+        element.classList.add(
+            "selected"
+        );
+    }
+
+
+    /*
+     * IMAGE
+     *
+     * It is the first element, so it is
+     * physically on the LEFT.
+     */
+
+    if (
+        person.image &&
+        person.image.trim() !== ""
+    ) {
+
+        const image =
+            document.createElement(
+                "img"
+            );
+
+
+        image.className =
+            "person-image";
+
+
+        image.src =
+            person.image;
+
+
+        image.alt =
+            person.name ||
+            "Person";
+
+
+        /*
+         * If the image doesn't load,
+         * turn it into a placeholder.
+         */
+
+        image.addEventListener(
+            "error",
+            () => {
+
+                const placeholder =
+                    document.createElement(
+                        "div"
+                    );
+
+
+                placeholder.className =
+                    "person-image placeholder";
+
+
+                placeholder.textContent =
+                    "?";
+
+
+                image.replaceWith(
+                    placeholder
+                );
+            }
+        );
+
+
+        element.appendChild(
+            image
+        );
+
+    } else {
+
+        const placeholder =
+            document.createElement(
+                "div"
+            );
+
+
+        placeholder.className =
+            "person-image placeholder";
+
+
+        placeholder.textContent =
+            "?";
+
+
+        element.appendChild(
+            placeholder
+        );
+    }
+
+
+    /*
+     * Information container.
+     */
+
+    const info =
+        document.createElement(
+            "div"
+        );
+
+
+    info.className =
+        "person-info";
+
+
+    /*
+     * Name.
+     */
+
+    const name =
+        document.createElement(
+            "div"
+        );
+
+
+    name.className =
+        "person-name";
+
+
+    name.textContent =
+        person.name ||
+        "Unknown";
+
+
+    info.appendChild(
+        name
+    );
+
+
+    /*
+     * Dates.
+     */
+
+    const dates =
+        document.createElement(
+            "div"
+        );
+
+
+    dates.className =
+        "person-dates";
+
+
+    dates.textContent =
+        formatDates(
+            person
+        );
+
+
+    info.appendChild(
+        dates
+    );
+
+
+    /*
+     * Source.
+     */
+
+    if (
+        person.source
+    ) {
+
+        const source =
+            document.createElement(
+                "div"
+            );
+
+
+        source.className =
+            "person-source";
+
+
+        source.textContent =
+            person.source;
+
+
+        source.title =
+            person.source;
+
+
+        info.appendChild(
+            source
+        );
+    }
+
+
+    element.appendChild(
+        info
+    );
+
+
+    /*
+     * Click handler.
+     */
+
+    element.addEventListener(
+        "click",
+        event => {
+
+            event.stopPropagation();
+
+            selectPerson(
+                person.id
+            );
+        }
+    );
+
+
+    tree.appendChild(
+        element
+    );
+}
+
+
+
+/* =========================================================
+   FORMAT DATES
+   ========================================================= */
+
+function formatDates(
+    person
+) {
+
+    const birth =
+        person.birth ??
+        "?";
+
+
+    const death =
+        person.death ??
+        "?";
+
+
+    return `${birth} – ${death}`;
+}
+
+
+
+/* =========================================================
+   RENDER CONNECTIONS
+   =========================================================
+
+   For a family:
+
+       Father ───── Mother
+              |
+              |
+             junction
+            /   |   \
+          child child child
+
+
+   All lines are HTML DIVs.
+   ========================================================= */
+
+function renderConnections() {
+
+    /*
+     * Families must be drawn in front of neither
+     * the people nor each other.
+     */
+
+    for (
+        const family
+        of families
+    ) {
+
+        renderFamilyConnections(
+            family
+        );
+    }
+}
+
+
+
+/* =========================================================
+   RENDER ONE FAMILY
+   ========================================================= */
+
+function renderFamilyConnections(
+    family
+) {
+
+    const fatherPosition =
+        family.father !== null
+            ? positions.get(
+                family.father
+            )
+            : null;
+
+
+    const motherPosition =
+        family.mother !== null
+            ? positions.get(
+                family.mother
+            )
+            : null;
+
+
+    const children =
+        family.children
+            .map(
+                id =>
+                    positions.get(id)
+            )
+            .filter(Boolean);
+
+
+    if (
+        children.length === 0
+    ) {
+        return;
+    }
+
+
+    /*
+     * =====================================================
+     * DETERMINE PARENT RELATIONSHIP CENTER
+     * =====================================================
+     */
+
+    let parentCenterX;
+
+    let parentBottomY;
+
+
+    if (
+        fatherPosition &&
+        motherPosition
+    ) {
+
+        const fatherCenterX =
+            fatherPosition.x +
+            CONFIG.nodeWidth / 2;
+
+
+        const motherCenterX =
+            motherPosition.x +
+            CONFIG.nodeWidth / 2;
+
+
+        parentCenterX =
+            (
+                fatherCenterX +
+                motherCenterX
+            ) / 2;
+
+
+        /*
+         * Draw horizontal parent relationship.
+
+         * We put it through the vertical center
+         * of the cards.
+         */
+
+        const relationshipY =
+            fatherPosition.y +
+            CONFIG.nodeHeight / 2;
+
+
+        addHorizontalConnection(
+            Math.min(
+                fatherCenterX,
+                motherCenterX
+            ),
+            relationshipY,
+            Math.abs(
+                motherCenterX -
+                fatherCenterX
+            ),
+            "partner"
+        );
+
+
+        /*
+         * Since both parents should normally occupy
+         * the same generation, use the lower card edge.
+         */
+
+        parentBottomY =
+            Math.max(
+                fatherPosition.y,
+                motherPosition.y
+            )
+            +
+            CONFIG.nodeHeight;
+
+
+        /*
+         * Drop from the relationship line to the
+         * family junction.
+         */
+
+        addVerticalConnection(
+            parentCenterX,
+
+            relationshipY,
+
+            parentBottomY -
+            relationshipY +
+            25
+        );
+
+    } else {
+
+        /*
+         * Single known parent.
+         */
+
+        const parent =
+            fatherPosition ||
+            motherPosition;
+
+
+        parentCenterX =
+            parent.x +
+            CONFIG.nodeWidth / 2;
+
+
+        parentBottomY =
+            parent.y +
+            CONFIG.nodeHeight;
+
+
+        addVerticalConnection(
+            parentCenterX,
+
+            parentBottomY,
+
+            25
+        );
+    }
+
+
+    /*
+     * Family junction.
+     */
+
+    const junctionY =
+        parentBottomY +
+        25;
+
+
+    addJunction(
+        parentCenterX,
+        junctionY
+    );
+
+
+    /*
+     * =====================================================
+     * CHILDREN
+     * =====================================================
+     */
+
+    const childCenters =
+        children.map(
+            child => ({
+                x:
+                    child.x +
+                    CONFIG.nodeWidth / 2,
+
+                y:
+                    child.y
+            })
+        );
+
+
+    /*
+     * One child:
+     *
+     * parent
+     *    |
+     *    |
+     *  child
+     */
+
+    if (
+        childCenters.length === 1
+    ) {
+
+        const child =
+            childCenters[0];
+
+
+        addVerticalConnection(
+            parentCenterX,
+
+            junctionY,
+
+            child.y -
+            junctionY
+        );
+
+
+        /*
+         * If parent and child aren't horizontally
+         * aligned, add a horizontal segment.
+         */
+
+        if (
+            Math.abs(
+                child.x -
+                parentCenterX
+            ) > 1
+        ) {
+
+            const middleY =
+                (
+                    junctionY +
+                    child.y
+                ) / 2;
+
+
+            addVerticalConnection(
+                parentCenterX,
+
+                junctionY,
+
+                middleY -
+                junctionY
+            );
+
+
+            addHorizontalConnection(
+                Math.min(
+                    parentCenterX,
+                    child.x
+                ),
+
+                middleY,
+
+                Math.abs(
+                    child.x -
+                    parentCenterX
+                )
+            );
+
+
+            addVerticalConnection(
+                child.x,
+
+                middleY,
+
+                child.y -
+                middleY
+            );
+        }
+
+
+        return;
+    }
+
+
+    /*
+     * =====================================================
+     * MULTIPLE CHILDREN
+     *
+     *              ●
+     *              |
+     *        ------+------
+     *        |     |     |
+     *        |     |     |
+     *       child child child
+     * =====================================================
+     */
+
+    const left =
+        Math.min(
+            ...childCenters.map(
+                child =>
+                    child.x
+            )
+        );
+
+
+    const right =
+        Math.max(
+            ...childCenters.map(
+                child =>
+                    child.x
+            )
+        );
+
+
+    /*
+     * Vertical segment from family junction
+     * to sibling bar.
+     */
+
+    const siblingBarY =
+        junctionY +
+        25;
+
+
+    addVerticalConnection(
+        parentCenterX,
+
+        junctionY,
+
+        25
+    );
+
+
+    /*
+     * Horizontal sibling bar.
+     */
+
+    addHorizontalConnection(
+        left,
+        siblingBarY,
+        right - left
+    );
+
+
+    /*
+     * Each child gets a vertical connection.
+     */
+
+    for (
+        const child
+        of childCenters
+    ) {
+
+        addVerticalConnection(
+            child.x,
+
+            siblingBarY,
+
+            child.y -
+            siblingBarY
+        );
+    }
+
+
+    /*
+     * Junction on sibling bar.
+     */
+
+    addJunction(
+        parentCenterX,
+        siblingBarY
+    );
+}
+
+
+
+/* =========================================================
+   HTML CONNECTION HELPERS
+   ========================================================= */
+
+function addHorizontalConnection(
+    x,
+    y,
+    width,
+    extraClass = ""
+) {
+
+    const element =
+        document.createElement(
+            "div"
+        );
+
+
+    element.className =
+        `connection horizontal ${extraClass}`;
+
+
+    element.style.left =
+        `${x}px`;
+
+
+    element.style.top =
+        `${y - 1}px`;
+
+
+    element.style.width =
+        `${Math.max(
+            width,
+            2
+        )}px`;
+
+
+    tree.appendChild(
+        element
+    );
+}
+
+
+
+function addVerticalConnection(
+    x,
+    y,
+    height
+) {
+
+    if (
+        height <= 0
+    ) {
+        return;
+    }
+
+
+    const element =
+        document.createElement(
+            "div"
+        );
+
+
+    element.className =
+        "connection vertical";
+
+
+    element.style.left =
+        `${x - 1}px`;
+
+
+    element.style.top =
+        `${y}px`;
+
+
+    element.style.height =
+        `${height}px`;
+
+
+    tree.appendChild(
+        element
+    );
+}
+
+
+
+function addJunction(
+    x,
+    y
+) {
+
+    const element =
+        document.createElement(
+            "div"
+        );
+
+
+    element.className =
+        "junction";
+
+
+    element.style.left =
+        `${x}px`;
+
+
+    element.style.top =
+        `${y}px`;
+
+
+    tree.appendChild(
+        element
+    );
+}
+
+
+
+/* =========================================================
+   PERSON SELECTION
+   ========================================================= */
+
+function selectPerson(
+    id
+) {
+
+    const person =
+        peopleById.get(
+            id
+        );
+
+
+    if (!person) {
+        return;
+    }
+
+
+    selectedPersonId =
+        id;
+
+
+    /*
+     * Update card appearance.
+     */
+
+    document
+        .querySelectorAll(
+            ".person"
+        )
+        .forEach(
+            element => {
+
+                element.classList.toggle(
+
+                    "selected",
+
+                    Number(
+                        element.dataset.id
+                    ) === Number(id)
+                );
+            }
+        );
+
+
+    showDetails(
+        person
+    );
+}
+
+
+
+/* =========================================================
+   DETAILS PANEL
+   ========================================================= */
+
+function showDetails(
+    person
+) {
+
+    detailsContent.innerHTML =
+        "";
+
+
+    /*
+     * Name.
+     */
+
+    const heading =
+        document.createElement(
+            "h2"
+        );
+
+
+    heading.textContent =
+        person.name ||
+        "Unknown";
+
+
+    detailsContent.appendChild(
+        heading
+    );
+
+
+    /*
+     * Image.
+     */
+
+    if (
+        person.image
+    ) {
+
+        const image =
+            document.createElement(
+                "img"
+            );
+
+
+        image.className =
+            "detail-image";
+
+
+        image.src =
+            person.image;
+
+
+        image.alt =
+            person.name ||
+            "";
+
+
+        detailsContent.appendChild(
+            image
+        );
+    }
+
+
+    /*
+     * ID.
+     */
+
+    addDetail(
+        "ID",
+        person.id
+    );
+
+
+    /*
+     * Birth.
+     */
+
+    addDetail(
+        "Birth",
+        person.birth ??
+        "Unknown"
+    );
+
+
+    /*
+     * Death.
+     */
+
+    addDetail(
+        "Death",
+        person.death ??
+        "Unknown"
+    );
+
+
+    /*
+     * Father.
+     */
+
+    const father =
+        peopleById.get(
+            person.father
+        );
+
+
+    addDetail(
+        "Father",
+        father
+            ? father.name
+            : "Unknown"
+    );
+
+
+    /*
+     * Mother.
+     */
+
+    const mother =
+        peopleById.get(
+            person.mother
+        );
+
+
+    addDetail(
+        "Mother",
+        mother
+            ? mother.name
+            : "Unknown"
+    );
+
+
+    /*
+     * Children.
+     */
+
+    const children =
+        people.filter(
+            child =>
+
+                child.father ===
+                person.id ||
+
+                child.mother ===
+                person.id
+        );
+
+
+    addDetail(
+
+        "Children",
+
+        children.length
+            ? children
+                .map(
+                    child =>
+                        child.name
+                )
+                .join(", ")
+            : "None known"
+    );
+
+
+    /*
+     * Source.
+     */
+
+    addDetail(
+        "Source",
+        person.source ??
+        "Unknown"
+    );
+
+
+    details.classList.add(
+        "visible"
+    );
+}
+
+
+
+/* =========================================================
+   ADD DETAIL ROW
+   ========================================================= */
+
+function addDetail(
+    label,
+    value
+) {
+
+    const row =
+        document.createElement(
+            "div"
+        );
+
+
+    row.className =
+        "detail-row";
+
+
+    const labelElement =
+        document.createElement(
+            "div"
+        );
+
+
+    labelElement.className =
+        "detail-label";
+
+
+    labelElement.textContent =
+        label;
+
+
+    const valueElement =
+        document.createElement(
+            "div"
+        );
+
+
+    valueElement.className =
+        "detail-value";
+
+
+    valueElement.textContent =
+        value;
+
+
+    row.appendChild(
+        labelElement
+    );
+
+
+    row.appendChild(
+        valueElement
+    );
+
+
+    detailsContent.appendChild(
+        row
+    );
+}
+
+
+
+/* =========================================================
+   CLOSE DETAILS
+   ========================================================= */
+
+document
+    .getElementById(
+        "close-details"
+    )
+    .addEventListener(
+        "click",
+        () => {
+
+            details.classList.remove(
+                "visible"
+            );
+
+
+            selectedPersonId =
+                null;
+
+
+            document
+                .querySelectorAll(
+                    ".person.selected"
+                )
+                .forEach(
+                    element =>
+                        element.classList.remove(
+                            "selected"
+                        )
+                );
+        }
+    );
+
+
+
+/* =========================================================
+   ZOOM / PAN
+   ========================================================= */
+
+function updateTransform() {
+
+    tree.style.transform =
+        `translate(${panX}px, ${panY}px) ` +
+        `scale(${zoom})`;
+}
+
+
+
+/* =========================================================
+   ZOOM AT CENTER
+   ========================================================= */
+
+function changeZoom(
+    amount
+) {
+
+    const oldZoom =
+        zoom;
+
+
+    zoom =
+        Math.max(
+            0.15,
+            Math.min(
+                3,
+                zoom * amount
+            )
+        );
+
+
+    /*
+     * Keep the center of the viewport
+     * approximately fixed.
+     */
+
+    const centerX =
+        viewport.clientWidth / 2;
+
+
+    const centerY =
+        viewport.clientHeight / 2;
+
+
+    panX =
+        centerX -
+        (
+            centerX -
+            panX
+        )
+        *
+        (
+            zoom /
+            oldZoom
+        );
+
+
+    panY =
+        centerY -
+        (
+            centerY -
+            panY
+        )
+        *
+        (
+            zoom /
+            oldZoom
+        );
+
+
+    updateTransform();
+}
+
+
+
+/* =========================================================
+   BUTTONS
+   ========================================================= */
+
+document
+    .getElementById(
+        "zoom-in"
+    )
+    .addEventListener(
+        "click",
+        () => {
+
+            changeZoom(
+                1.25
+            );
+        }
+    );
+
+
+document
+    .getElementById(
+        "zoom-out"
+    )
+    .addEventListener(
+        "click",
+        () => {
+
+            changeZoom(
+                0.8
+            );
+        }
+    );
+
+
+
+/* =========================================================
+   RESET VIEW
+   ========================================================= */
+
+document
+    .getElementById(
+        "reset-view"
+    )
+    .addEventListener(
+        "click",
+        () => {
+
+            zoom = 1;
+
+            panX = 0;
+
+            panY = 0;
+
+            updateTransform();
+        }
+    );
+
+
+
+/* =========================================================
+   FIT TREE
+   ========================================================= */
+
+function fitTree() {
+
+    if (
+        positions.size === 0
+    ) {
+        return;
+    }
+
+
+    let minX =
+        Infinity;
+
+    let minY =
+        Infinity;
+
+    let maxX =
+        -Infinity;
+
+    let maxY =
+        -Infinity;
+
+
+    for (
+        const position
+        of positions.values()
+    ) {
+
+        minX =
+            Math.min(
+                minX,
+                position.x
+            );
+
+
+        minY =
+            Math.min(
+                minY,
+                position.y
+            );
+
+
+        maxX =
+            Math.max(
+                maxX,
+                position.x +
+                CONFIG.nodeWidth
+            );
+
+
+        maxY =
+            Math.max(
+                maxY,
+                position.y +
+                CONFIG.nodeHeight
+            );
+    }
+
+
+    const treeWidth =
+        maxX -
+        minX;
+
+
+    const treeHeight =
+        maxY -
+        minY;
+
+
+    const viewportWidth =
+        viewport.clientWidth;
+
+
+    const viewportHeight =
+        viewport.clientHeight;
+
+
+    const scaleX =
+        (
+            viewportWidth -
+            100
+        )
+        /
+        treeWidth;
+
+
+    const scaleY =
+        (
+            viewportHeight -
+            100
+        )
+        /
+        treeHeight;
+
+
+    zoom =
+        Math.min(
+            scaleX,
+            scaleY,
+            1
+        );
+
+
+    zoom =
+        Math.max(
+            zoom,
+            0.15
+        );
+
+
+    panX =
+        (
+            viewportWidth -
+            treeWidth * zoom
+        ) / 2
+        -
+        minX * zoom;
+
+
+    panY =
+        (
+            viewportHeight -
+            treeHeight * zoom
+        ) / 2
+        -
+        minY * zoom;
+
+
+    updateTransform();
+}
+
+
+document
+    .getElementById(
+        "fit-view"
+    )
+    .addEventListener(
+        "click",
+        fitTree
+    );
+
+
+
+/* =========================================================
+   MOUSE WHEEL ZOOM
+   ========================================================= */
+
+viewport.addEventListener(
+    "wheel",
+    event => {
+
+        event.preventDefault();
+
+
+        const oldZoom =
+            zoom;
+
+
+        const factor =
+            event.deltaY < 0
+                ? 1.1
+                : 0.9;
+
+
+        zoom =
+            Math.max(
+                0.15,
+                Math.min(
+                    3,
+                    zoom * factor
+                )
+            );
+
+
+        /*
+         * Zoom around the mouse position rather than
+         * the center of the screen.
+         */
+
+        const rect =
+            viewport.getBoundingClientRect();
+
+
+        const mouseX =
+            event.clientX -
+            rect.left;
+
+
+        const mouseY =
+            event.clientY -
+            rect.top;
+
+
+        panX =
+            mouseX -
+            (
+                mouseX -
+                panX
+            )
+            *
+            (
+                zoom /
+                oldZoom
+            );
+
+
+        panY =
+            mouseY -
+            (
+                mouseY -
+                panY
+            )
+            *
+            (
+                zoom /
+                oldZoom
+            );
+
+
+        updateTransform();
+
+    },
+    {
+        passive: false
+    }
+);
+
+
+
+/* =========================================================
+   DRAG / PAN
+   ========================================================= */
+
+let dragging = false;
+
+let dragStartX = 0;
+
+let dragStartY = 0;
+
+let startingPanX = 0;
+
+let startingPanY = 0;
+
+
+viewport.addEventListener(
+    "pointerdown",
+    event => {
+
+        /*
+         * Only start dragging if the background
+         * itself was clicked.
+         */
+
+        if (
+            event.target.closest(
+                ".person"
+            )
+        ) {
+            return;
+        }
+
+
+        dragging = true;
+
+
+        viewport.classList.add(
+            "dragging"
+        );
+
+
+        dragStartX =
+            event.clientX;
+
+
+        dragStartY =
+            event.clientY;
+
+
+        startingPanX =
+            panX;
+
+
+        startingPanY =
+            panY;
+
+
+        viewport.setPointerCapture(
+            event.pointerId
+        );
+    }
+);
+
+
+viewport.addEventListener(
+    "pointermove",
+    event => {
+
+        if (!dragging) {
+            return;
+        }
+
+
+        panX =
+            startingPanX +
+            (
+                event.clientX -
+                dragStartX
+            );
+
+
+        panY =
+            startingPanY +
+            (
+                event.clientY -
+                dragStartY
+            );
+
+
+        updateTransform();
+    }
+);
+
+
+viewport.addEventListener(
+    "pointerup",
+    event => {
+
+        dragging = false;
+
+
+        viewport.classList.remove(
+            "dragging"
+        );
+
+
+        try {
+
+            viewport.releasePointerCapture(
+                event.pointerId
+            );
+
+        } catch {
+            /*
+             * Pointer may already have been released.
+             */
+        }
+    }
+);
+
+
+viewport.addEventListener(
+    "pointercancel",
+    () => {
+
+        dragging = false;
+
+        viewport.classList.remove(
+            "dragging"
+        );
+    }
+);
+
+
+
+/* =========================================================
+   ESCAPE CLOSES DETAILS
+   ========================================================= */
+
+document.addEventListener(
+    "keydown",
+    event => {
+
+        if (
+            event.key ===
+            "Escape"
+        ) {
+
+            details.classList.remove(
+                "visible"
+            );
+        }
+    }
+);
+
+
+
+/* =========================================================
+   START APPLICATION
+   ========================================================= */
 
 async function main() {
 
     try {
 
-        const people =
-            await loadFamily();
+        await loadData();
 
-        const svg =
-            document.getElementById("tree");
 
-        const tree =
-            new FamilyTree(svg, people);
+        /*
+         * Calculate where everyone belongs.
+         */
 
-        tree.draw();
+        calculateLayout();
+
+
+        /*
+         * Create HTML.
+         */
+
+        renderTree();
+
+
+        /*
+         * Hide loading message.
+         */
+
+        message.classList.add(
+            "hidden"
+        );
+
+
+        /*
+         * Automatically fit the entire genealogy
+         * to the window.
+         */
+
+        requestAnimationFrame(
+            () => {
+
+                fitTree();
+            }
+        );
+
 
     } catch (error) {
 
-        console.error(error);
+        console.error(
+            error
+        );
 
-        document.body.innerHTML =
-            `<pre>${error.message}</pre>`;
+
+        message.textContent =
+            error.message;
+
+
+        message.style.color =
+            "#7a2118";
     }
 }
 
 
 main();
+
 </script>
 
 </body>
