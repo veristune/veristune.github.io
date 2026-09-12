@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Family Tree</title>
+
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: Georgia, serif;
+            background: #f4f1ea;
+        }
+
+        #tree-container {
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            cursor: grab;
+        }
+
+        #tree-container.dragging {
+            cursor: grabbing;
+        }
+
+        svg {
+            width: 100%;
+            height: 100%;
+        }
+
+        .person-box {
+            fill: #fffdf8;
+            stroke: #4b4035;
+            stroke-width: 2;
+            rx: 8;
+        }
+
+        .person-name {
+            font-size: 16px;
+            font-weight: bold;
+            fill: #29231f;
+        }
+
+        .person-date {
+            font-size: 13px;
+            fill: #665c54;
+        }
+
+        .person-source {
+            font-size: 11px;
+            fill: #81766d;
+        }
+
+        .person-image {
+            object-fit: cover;
+        }
+
+        .parent-line {
+            fill: none;
+            stroke: #71675f;
+            stroke-width: 2;
+        }
+
+        .relationship-line {
+            fill: none;
+            stroke: #a18c70;
+            stroke-width: 2;
+        }
+
+        .unknown-image {
+            fill: #ddd5ca;
+        }
+    </style>
+</head>
+
+<body>
+
+<div id="tree-container">
+    <svg id="tree">
+        <g id="viewport">
+            <g id="relationships"></g>
+            <g id="people"></g>
+        </g>
+    </svg>
+</div>
+
+<script>
+async function loadFamily() {
+    const response = await fetch("familymembers.json");
+
+    if (!response.ok) {
+        throw new Error("Could not load familymembers.json");
+    }
+
+    return await response.json();
+}
+
+
+class FamilyTree {
+
+    constructor(svg, people) {
+        this.svg = svg;
+        this.people = people;
+
+        this.peopleById = new Map(
+            people.map(person => [person.id, person])
+        );
+
+        this.positions = new Map();
+
+        this.viewport = svg.querySelector("#viewport");
+        this.relationshipLayer = svg.querySelector("#relationships");
+        this.peopleLayer = svg.querySelector("#people");
+
+        this.nodeWidth = 240;
+        this.nodeHeight = 100;
+
+        this.horizontalSpacing = 40;
+        this.verticalSpacing = 100;
+    }
+
+
+    getPerson(id) {
+        if (id == null) {
+            return null;
+        }
+
+        return this.peopleById.get(id) || null;
+    }
+
+
+    /*
+     * Determine an approximate generation for each person.
+     *
+     * This is deliberately tolerant of unusual genealogies.
+     */
+    calculateGenerations() {
+
+        const generations = new Map();
+        const visiting = new Set();
+
+        const getGeneration = (person) => {
+
+            if (!person) {
+                return 0;
+            }
+
+            if (generations.has(person.id)) {
+                return generations.get(person.id);
+            }
+
+            // Prevent infinite recursion if malformed data
+            // contains an actual genealogical cycle.
+            if (visiting.has(person.id)) {
+                return 0;
+            }
+
+            visiting.add(person.id);
+
+            const father = this.getPerson(person.father);
+            const mother = this.getPerson(person.mother);
+
+            let generation = 0;
+
+            if (father) {
+                generation = Math.max(
+                    generation,
+                    getGeneration(father) + 1
+                );
+            }
+
+            if (mother) {
+                generation = Math.max(
+                    generation,
+                    getGeneration(mother) + 1
+                );
+            }
+
+            visiting.delete(person.id);
+
+            generations.set(person.id, generation);
+
+            return generation;
+        };
+
+
+        for (const person of this.people) {
+            getGeneration(person);
+        }
+
+        return generations;
+    }
+
+
+    /*
+     * Put people into generation rows.
+     */
+    calculatePositions() {
+
+        const generations = this.calculateGenerations();
+
+        const rows = new Map();
+
+        for (const person of this.people) {
+
+            const generation = generations.get(person.id);
+
+            if (!rows.has(generation)) {
+                rows.set(generation, []);
+            }
+
+            rows.get(generation).push(person);
+        }
+
+
+        /*
+         * Sort each generation by ID for now.
+         *
+         * This can later be replaced with a much smarter
+         * genealogical ordering algorithm.
+         */
+        for (const people of rows.values()) {
+            people.sort((a, b) => a.id - b.id);
+        }
+
+
+        for (const [generation, people] of rows) {
+
+            people.forEach((person, index) => {
+
+                const x =
+                    index *
+                    (this.nodeWidth + this.horizontalSpacing);
+
+                const y =
+                    generation *
+                    (this.nodeHeight + this.verticalSpacing);
+
+                this.positions.set(person.id, {
+                    x,
+                    y
+                });
+            });
+        }
+    }
+
+
+    draw() {
+
+        this.calculatePositions();
+
+        this.drawRelationships();
+        this.drawPeople();
+    }
+
+
+    drawRelationships() {
+
+        this.relationshipLayer.innerHTML = "";
+
+        for (const child of this.people) {
+
+            const childPosition = this.positions.get(child.id);
+
+            if (!childPosition) {
+                continue;
+            }
+
+            const father = this.getPerson(child.father);
+            const mother = this.getPerson(child.mother);
+
+
+            /*
+             * Draw parent → child relationships.
+             */
+            for (const parent of [father, mother]) {
+
+                if (!parent) {
+                    continue;
+                }
+
+                const parentPosition =
+                    this.positions.get(parent.id);
+
+                if (!parentPosition) {
+                    continue;
+                }
+
+
+                const x1 =
+                    parentPosition.x +
+                    this.nodeWidth / 2;
+
+                const y1 =
+                    parentPosition.y +
+                    this.nodeHeight;
+
+                const x2 =
+                    childPosition.x +
+                    this.nodeWidth / 2;
+
+                const y2 =
+                    childPosition.y;
+
+
+                /*
+                 * Use an orthogonal-looking path rather than
+                 * simply drawing a diagonal line.
+                 */
+                const middleY =
+                    (y1 + y2) / 2;
+
+
+                const path = document.createElementNS(
+                    "http://www.w3.org/2000/svg",
+                    "path"
+                );
+
+                path.setAttribute(
+                    "d",
+                    `
+                    M ${x1} ${y1}
+                    V ${middleY}
+                    H ${x2}
+                    V ${y2}
+                    `
+                );
+
+                path.setAttribute(
+                    "class",
+                    "parent-line"
+                );
+
+                this.relationshipLayer.appendChild(path);
+            }
+
+
+            /*
+             * Draw a horizontal relationship between the
+             * parents themselves.
+             */
+            if (father && mother) {
+
+                const fatherPosition =
+                    this.positions.get(father.id);
+
+                const motherPosition =
+                    this.positions.get(mother.id);
+
+
+                if (fatherPosition && motherPosition) {
+
+                    const x1 =
+                        fatherPosition.x +
+                        this.nodeWidth / 2;
+
+                    const x2 =
+                        motherPosition.x +
+                        this.nodeWidth / 2;
+
+                    const y =
+                        fatherPosition.y +
+                        this.nodeHeight / 2;
+
+
+                    const line =
+                        document.createElementNS(
+                            "http://www.w3.org/2000/svg",
+                            "line"
+                        );
+
+                    line.setAttribute("x1", x1);
+                    line.setAttribute("x2", x2);
+                    line.setAttribute("y1", y);
+                    line.setAttribute("y2", y);
+
+                    line.setAttribute(
+                        "class",
+                        "relationship-line"
+                    );
+
+                    this.relationshipLayer.appendChild(line);
+                }
+            }
+        }
+    }
+
+
+    drawPeople() {
+
+        this.peopleLayer.innerHTML = "";
+
+        for (const person of this.people) {
+
+            const position =
+                this.positions.get(person.id);
+
+            if (!position) {
+                continue;
+            }
+
+
+            const group =
+                document.createElementNS(
+                    "http://www.w3.org/2000/svg",
+                    "g"
+                );
+
+            group.setAttribute(
+                "transform",
+                `translate(${position.x}, ${position.y})`
+            );
+
+
+            /*
+             * Box
+             */
+            const rect =
+                document.createElementNS(
+                    "http://www.w3.org/2000/svg",
+                    "rect"
+                );
+
+            rect.setAttribute("width", this.nodeWidth);
+            rect.setAttribute("height", this.nodeHeight);
+
+            rect.setAttribute(
+                "class",
+                "person-box"
+            );
+
+            group.appendChild(rect);
+
+
+            /*
+             * Image on LEFT.
+             */
+            const imageSize = 72;
+
+            if (person.image) {
+
+                const image =
+                    document.createElementNS(
+                        "http://www.w3.org/2000/svg",
+                        "image"
+                    );
+
+                image.setAttribute(
+                    "href",
+                    person.image
+                );
+
+                image.setAttribute(
+                    "x",
+                    10
+                );
+
+                image.setAttribute(
+                    "y",
+                    14
+                );
+
+                image.setAttribute(
+                    "width",
+                    imageSize
+                );
+
+                image.setAttribute(
+                    "height",
+                    imageSize
+                );
+
+                image.setAttribute(
+                    "preserveAspectRatio",
+                    "xMidYMid slice"
+                );
+
+                group.appendChild(image);
+
+            } else {
+
+                const placeholder =
+                    document.createElementNS(
+                        "http://www.w3.org/2000/svg",
+                        "rect"
+                    );
+
+                placeholder.setAttribute("x", 10);
+                placeholder.setAttribute("y", 14);
+                placeholder.setAttribute(
+                    "width",
+                    imageSize
+                );
+                placeholder.setAttribute(
+                    "height",
+                    imageSize
+                );
+
+                placeholder.setAttribute(
+                    "class",
+                    "unknown-image"
+                );
+
+                group.appendChild(placeholder);
+            }
+
+
+            /*
+             * Name
+             */
+            const name =
+                document.createElementNS(
+                    "http://www.w3.org/2000/svg",
+                    "text"
+                );
+
+            name.setAttribute("x", 92);
+            name.setAttribute("y", 30);
+
+            name.setAttribute(
+                "class",
+                "person-name"
+            );
+
+            name.textContent =
+                person.name || "Unknown";
+
+            group.appendChild(name);
+
+
+            /*
+             * Dates
+             */
+            const dates =
+                document.createElementNS(
+                    "http://www.w3.org/2000/svg",
+                    "text"
+                );
+
+            dates.setAttribute("x", 92);
+            dates.setAttribute("y", 51);
+
+            dates.setAttribute(
+                "class",
+                "person-date"
+            );
+
+            const birth =
+                person.birth || "?";
+
+            const death =
+                person.death || "?";
+
+            dates.textContent =
+                `${birth} – ${death}`;
+
+            group.appendChild(dates);
+
+
+            /*
+             * Source
+             */
+            const source =
+                document.createElementNS(
+                    "http://www.w3.org/2000/svg",
+                    "text"
+                );
+
+            source.setAttribute("x", 92);
+            source.setAttribute("y", 72);
+
+            source.setAttribute(
+                "class",
+                "person-source"
+            );
+
+            source.textContent =
+                person.source || "";
+
+            group.appendChild(source);
+
+
+            /*
+             * Clicking a person could later open a
+             * detailed information panel.
+             */
+            group.style.cursor = "pointer";
+
+            group.addEventListener(
+                "click",
+                () => {
+                    console.log("Selected:", person);
+                }
+            );
+
+
+            this.peopleLayer.appendChild(group);
+        }
+    }
+}
+
+
+async function main() {
+
+    try {
+
+        const people =
+            await loadFamily();
+
+        const svg =
+            document.getElementById("tree");
+
+        const tree =
+            new FamilyTree(svg, people);
+
+        tree.draw();
+
+    } catch (error) {
+
+        console.error(error);
+
+        document.body.innerHTML =
+            `<pre>${error.message}</pre>`;
+    }
+}
+
+
+main();
+</script>
+
+</body>
+</html>
